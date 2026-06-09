@@ -1,0 +1,55 @@
+# Atlas Renovável do Nordeste — orquestração de 3 serviços:
+#   trainer   → executa src/train.py uma vez (gera mlruns/, models/, reports/)
+#   mlflow    → MLflow UI em http://localhost:5001
+#   dashboard → Streamlit em http://localhost:8501
+#
+# Uso:  docker compose up --build
+# Os diretórios mlruns/, models/ e reports/ são montados no host para persistir
+# os artefatos e compartilhá-los entre os serviços.
+
+services:
+  trainer:
+    build: .
+    command: python src/train.py
+    environment:
+      - MLFLOW_ALLOW_FILE_STORE=true
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./mlruns:/app/mlruns
+
+  mlflow:
+    build: .
+    command: >
+      mlflow ui
+      --host 0.0.0.0 --port 5001
+      --backend-store-uri file:///app/mlruns
+    environment:
+      - MLFLOW_ALLOW_FILE_STORE=true
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./mlruns:/app/mlruns
+    depends_on:
+      trainer:
+        condition: service_completed_successfully
+
+  dashboard:
+    build: .
+    command: >
+      streamlit run app/app.py
+      --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./mlruns:/app/mlruns
+    depends_on:
+      trainer:
+        condition: service_completed_successfully

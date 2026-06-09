@@ -1,0 +1,21 @@
+# Ambiente e controle de versão
+.venv/
+.git/
+.gitignore
+
+# Caches Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Artefatos gerados (recriados pelo trainer / montados via volume)
+mlruns/
+models/
+reports/
+data/raw/
+
+# Arquivos auxiliares e documentos pesados
+_train_full.log
+_report_extract.txt
+*.pdf
