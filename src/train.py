@@ -244,6 +244,45 @@ def montar_pipeline(estimator) -> Pipeline:
 SCORERS = ["r2", "neg_mean_absolute_error", "neg_root_mean_squared_error"]
 
 
+def r2_detalhado(y_true, y_pred, contexto: str = "") -> dict:
+    """
+    Recalcula o R² de forma explícita e expõe os termos intermediários
+    (n, média de y, SST, SSE) da fórmula  R² = 1 − SSE/SST.
+
+    Serve de auditoria: o R² manual e o de ``sklearn.r2_score`` devem
+    coincidir até a precisão de ponto flutuante. Se algum dia divergirem,
+    há de fato um problema de implementação/inversão/tipo a investigar.
+
+    ── Glossário ─────────────────────────────────────────────────────────
+      SST (Total Sum of Squares)    = Σ (yᵢ − ȳ)²  → variância total do alvo
+      SSE (Residual Sum of Squares) = Σ (yᵢ − ŷᵢ)² → erro do modelo
+      R²  = 1 − SSE/SST  (1 = perfeito, 0 = igual a prever a média, <0 = pior)
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    n       = int(y_true.size)
+    y_media = float(y_true.mean())
+    sse     = float(np.sum((y_true - y_pred) ** 2))    # resíduos do modelo
+    sst     = float(np.sum((y_true - y_media) ** 2))   # variabilidade total
+    r2_manual  = 1.0 - sse / sst if sst > 0 else float("nan")
+    r2_sklearn = float(r2_score(y_true, y_pred))
+
+    tag = f" — {contexto}" if contexto else ""
+    log.info(
+        f"    [R² detalhado{tag}] n={n} | ȳ={y_media:.4f} | "
+        f"SST={sst:.4f} | SSE={sse:.4f} | "
+        f"R²(1−SSE/SST)={r2_manual:.4f} | R²(sklearn)={r2_sklearn:.4f}"
+    )
+    if not np.isnan(r2_manual) and abs(r2_manual - r2_sklearn) > 1e-9:
+        log.warning(
+            f"    [R² detalhado{tag}] divergência manual×sklearn "
+            f"({r2_manual:.6f} ≠ {r2_sklearn:.6f}) — investigar cálculo!"
+        )
+    return {"n": n, "y_media": y_media, "sst": sst, "sse": sse,
+            "r2_manual": r2_manual, "r2_sklearn": r2_sklearn}
+
+
 def avaliar(pipe_best: Pipeline, X: np.ndarray, y: np.ndarray) -> dict:
     """Aplica as três estratégias de validação a um pipeline já configurado."""
     # 1. Holdout 80/20 ---------------------------------------------------------
@@ -269,6 +308,9 @@ def avaliar(pipe_best: Pipeline, X: np.ndarray, y: np.ndarray) -> dict:
     # 3. Leave-One-Out: métricas sobre o vetor agregado de previsões ------------
     # (R² não é definido por fold de 1 amostra → agrega-se via cross_val_predict)
     loo_pred = cross_val_predict(clone(pipe_best), X, y, cv=LeaveOneOut(), n_jobs=-1)
+    # Auditoria do R² LOO: imprime os termos intermediários (n, ȳ, SST, SSE)
+    # e confere o R² manual contra o do sklearn.
+    r2_detalhado(y, loo_pred, contexto="LOO")
     loo = {
         "loo_r2":   r2_score(y, loo_pred),
         "loo_mae":  mean_absolute_error(y, loo_pred),
