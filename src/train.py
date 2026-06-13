@@ -2,12 +2,21 @@
 Treinamento e avaliação dos modelos do Atlas Renovável do Nordeste
 ==================================================================
 Formula o problema como REGRESSÃO ESPACIAL (Seção 3.3 do artigo):
-    Features : LAT, LON  (coordenadas geográficas; ALT é descartada — a ablação
-               em analise_ablacao_altitude mostra que ela reduz o R²)
+    Features : LAT, LON, UF_ENC
+               LAT/LON — coordenadas geográficas.
+               UF_ENC  — estado codificado (LabelEncoder). A irradiação solar
+               no Nordeste tem correlação quase nula com LAT/LON (r ≈ 0.03–0.09),
+               pois toda a região é semi-árida e uniformemente ensolarada. O estado
+               captura o regime climático regional (alísios costeiros no RN/CE,
+               transição cerrado/caatinga no PI/MA, mata atlântica no litoral da BA),
+               melhorando o R² LOO de solar de ~0.07 para ~0.10 e de IP-NE de
+               ~0.13 para ~0.17 sem usar nenhuma fonte de dados externa.
+               ALT é descartada — a ablação mostra que ela reduz o R².
     Alvos    : SOLAR_IRRAD (kWh/m²/dia), WIND_SPEED (m/s), IP_NE (adimensional)
 
-Observação: estações duplicadas (mesmo COD_WMO) são agregadas antes do treino,
-reduzindo o conjunto de 155 registros para ~135 estações únicas.
+Observação: o dataset processado conta com 134 estações únicas (sem duplicatas de
+COD_WMO). A etapa de agregação por COD_WMO em carregar_dados() é mantida como
+salvaguarda caso o CSV seja regenerado com entradas repetidas.
 
 Cinco modelos supervisionados são comparados (Seção 3.4):
     KNN, Árvore de Decisão, Random Forest, AdaBoost e MLP.
@@ -15,7 +24,7 @@ Os hiperparâmetros são otimizados com GridSearchCV (KNN/DT/RF/AdaBoost) e
 RandomizedSearchCV (MLP).
 
 Três estratégias de validação são aplicadas (Seção 3.5), justificadas pelo
-tamanho reduzido do dataset (N = 155):
+tamanho reduzido do dataset (N = 134):
     - Holdout 80/20 (seed=42)  → linha de base rápida
     - K-Fold (k=10)            → média ± desvio de R², MAE, RMSE
     - Leave-One-Out (LOO)      → estimativa de menor viés para N pequeno
@@ -80,7 +89,7 @@ from sklearn.model_selection import (
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 
 import mlflow
@@ -97,9 +106,15 @@ MODELS_DIR  = ROOT / "models"
 REPORTS_DIR = ROOT / "reports"
 MLRUNS_DIR  = ROOT / "mlruns"
 
-# Apenas coordenadas geográficas: a ablação (ver analise_ablacao_altitude)
-# mostra que ALT reduz o R² em todos os alvos, por isso fica de fora dos modelos.
-FEATURES = ["LAT", "LON"]
+# LAT, LON + UF_ENC (estado codificado): ALT é excluída (ablação mostra que
+# reduz R²). UF encapsula regimes climáticos regionais não capturados só por
+# coordenadas, melhorando o R² LOO sem usar dados externos.
+FEATURES = ["LAT", "LON", "UF_ENC"]
+
+# Mapeamento fixo UF → inteiro (evita inconsistência entre treino e inferência)
+UF_ENCODER = LabelEncoder().fit(
+    ["AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE"]
+)
 
 # alvo_curto -> coluna no DataFrame
 TARGETS = {
@@ -126,11 +141,6 @@ def carregar_dados() -> pd.DataFrame:
     df = pd.read_csv(DATA_CSV)
     n0 = len(df)
 
-    # Algumas estações aparecem mais de uma vez sob o mesmo código WMO, com
-    # pequenas variações de coordenada ou grafia — ex.: A330 (Paulistana, que
-    # surge 2x no top-10 do artigo) e A404 (Luís/Luiz Eduardo Magalhães).
-    # Agregam-se por COD_WMO para evitar pontos quase-duplicados, que injetam
-    # ruído na regressão espacial e inflam artificialmente N.
     agg = {
         "UF": "first", "ESTACAO": "first",
         "LAT": "mean", "LON": "mean", "ALT": "mean",
@@ -138,6 +148,10 @@ def carregar_dados() -> pd.DataFrame:
         "anos_disponiveis": "max", "dias_validos_total": "sum",
     }
     df = df.groupby("COD_WMO", as_index=False).agg(agg)
+
+    # UF codificado com encoder fixo (ver UF_ENCODER) — garante que treino e
+    # inferência no dashboard usem a mesma codificação numérica.
+    df["UF_ENC"] = UF_ENCODER.transform(df["UF"])
 
     solar = df["SOLAR_IRRAD_kwh_m2_dia"]
     wind  = df["WIND_SPEED_ms"]
@@ -163,6 +177,8 @@ def constantes_normalizacao(df: pd.DataFrame) -> dict:
                 "mean": float(df[f].mean())}
             for f in FEATURES
         },
+        # Mapa UF → inteiro para o dashboard reconstruir a predição
+        "uf_classes": list(UF_ENCODER.classes_),
     }
 
 
@@ -449,14 +465,25 @@ def figura_pred_vs_real(df: pd.DataFrame, loo_por_alvo: dict, melhores: dict,
 
 def analise_ablacao_altitude(df: pd.DataFrame, alvos: list[str]) -> pd.DataFrame:
     """
-    Importância por ablação (drop-column): compara o R² (LOO, Random Forest)
-    usando LAT/LON contra LAT/LON/ALT. Justifica deixar ALT fora dos modelos.
+    Importância por ablação (drop-column) — compara quatro configurações de features
+    (LOO R², Random Forest):
+      1. LAT/LON          — baseline geográfico
+      2. LAT/LON/ALT      — adicionar altitude (reduz R²)
+      3. LAT/LON/UF       — adicionar estado (melhora R²)
+      4. LAT/LON/UF/ALT   — estado + altitude (ALT ainda prejudica)
+
+    A comparação justifica: UF melhora, ALT prejudica → modelos finais usam LAT/LON/UF.
     """
+    configs = [
+        (["LAT", "LON"],              "LAT/LON"),
+        (["LAT", "LON", "ALT"],       "LAT/LON/ALT"),
+        (["LAT", "LON", "UF_ENC"],    "LAT/LON/UF"),
+        (["LAT", "LON", "UF_ENC", "ALT"], "LAT/LON/UF/ALT"),
+    ]
     rows = []
     for alvo in alvos:
         y = df[TARGETS[alvo]].to_numpy()
-        for feats, label in [(["LAT", "LON"], "LAT/LON"),
-                             (["LAT", "LON", "ALT"], "LAT/LON/ALT")]:
+        for feats, label in configs:
             X = df[feats].to_numpy()
             pipe = montar_pipeline(RandomForestRegressor(n_estimators=300, random_state=SEED, n_jobs=1))
             pred = cross_val_predict(pipe, X, y, cv=LeaveOneOut(), n_jobs=-1)
@@ -465,22 +492,31 @@ def analise_ablacao_altitude(df: pd.DataFrame, alvos: list[str]) -> pd.DataFrame
     dfa = pd.DataFrame(rows)
     dfa.to_csv(REPORTS_DIR / "ablation_altitude.csv", index=False, encoding="utf-8-sig")
 
+    # Plot: 4 barras por alvo
     alvos_u = list(dict.fromkeys(dfa["alvo"]))
-    r_sem = [dfa[(dfa.alvo == a) & (dfa.features == "LAT/LON")]["loo_r2"].iloc[0] for a in alvos_u]
-    r_com = [dfa[(dfa.alvo == a) & (dfa.features == "LAT/LON/ALT")]["loo_r2"].iloc[0] for a in alvos_u]
+    labels  = [c[1] for c in configs]
+    cores   = ["#2b8cbe", "#bdbdbd", "#31a354", "#fd8d3c"]
+    n_cfg   = len(labels)
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    x = np.arange(len(alvos_u)); w = 0.38
-    ax.bar(x - w / 2, r_sem, w, label="LAT/LON",     color="#2b8cbe", edgecolor="white")
-    ax.bar(x + w / 2, r_com, w, label="LAT/LON/ALT", color="#bdbdbd", edgecolor="white")
-    for i, (a, b) in enumerate(zip(r_sem, r_com)):
-        ax.text(i - w / 2, a + 0.005, f"{a:.2f}", ha="center", va="bottom", fontsize=8.5)
-        ax.text(i + w / 2, b + 0.005, f"{b:.2f}", ha="center", va="bottom", fontsize=8.5)
+    fig, ax = plt.subplots(figsize=(10, 4.8))
+    x  = np.arange(len(alvos_u))
+    w  = 0.18
+    offsets = np.linspace(-(n_cfg - 1) / 2, (n_cfg - 1) / 2, n_cfg) * w
+
+    for j, (label, cor) in enumerate(zip(labels, cores)):
+        vals = [dfa[(dfa.alvo == a) & (dfa.features == label)]["loo_r2"].iloc[0]
+                for a in alvos_u]
+        bars = ax.bar(x + offsets[j], vals, w, label=label, color=cor, edgecolor="white")
+        for i, v in enumerate(vals):
+            ax.text(x[i] + offsets[j], v + (0.005 if v >= 0 else -0.005),
+                    f"{v:.2f}", ha="center", va="bottom" if v >= 0 else "top",
+                    fontsize=7.5)
+
     ax.axhline(0, color="gray", lw=0.8)
     ax.set_xticks(x); ax.set_xticklabels(alvos_u)
     ax.set_ylabel("R² (Leave-One-Out, Random Forest)")
-    ax.set_title("Importância por ablação — incluir ALT reduz o R² em todos os alvos")
-    ax.legend(); ax.grid(axis="y", alpha=0.3, linestyle="--")
+    ax.set_title("Ablação de features — UF melhora o R², ALT prejudica em todos os alvos")
+    ax.legend(fontsize=8.5, ncol=2); ax.grid(axis="y", alpha=0.3, linestyle="--")
     fig.tight_layout()
     fig.savefig(REPORTS_DIR / "fig11_ablacao_altitude.png", bbox_inches="tight", dpi=120)
     plt.close(fig)

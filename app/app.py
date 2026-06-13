@@ -5,7 +5,7 @@ Interface interativa que reúne:
   • Visão geral do dataset e do índice IP-NE
   • Análise exploratória (8 figuras do notebook 01_eda.ipynb)
   • Desempenho comparativo dos modelos (tabela + figuras de src/train.py)
-  • Previsão interativa: LAT/LON/ALT → irradiação solar, vento e IP-NE
+  • Previsão interativa: LAT/LON/UF → irradiação solar, vento e IP-NE
   • Ranking e mapa do potencial renovável por estação
 
 Execução:
@@ -31,7 +31,7 @@ MODELS_DIR  = ROOT / "models"
 REPORTS_DIR = ROOT / "reports"
 FIG_DIR     = ROOT / "notebooks"
 
-FEATURES = ["LAT", "LON"]
+FEATURES = ["LAT", "LON", "UF_ENC"]
 TARGETS  = {
     "SOLAR_IRRAD": "SOLAR_IRRAD_kwh_m2_dia",
     "WIND_SPEED":  "WIND_SPEED_ms",
@@ -138,11 +138,12 @@ st.sidebar.metric("Estados", f"{df['UF'].nunique()}")
 # ═══════════════════════════════════════════════════════════════════════════════
 if pagina == "Visão Geral":
     st.title("Atlas Renovável do Nordeste")
+    n_est = (metadata or {}).get("n_estacoes", len(df))
     st.markdown(
         "Sistema de **aprendizado de máquina** para mapeamento e previsão do "
         "potencial de geração de energia **solar, eólica e híbrida** nos nove "
         "estados do Nordeste. O índice **IP-NE** estende a metodologia IP-PB "
-        "(Ferreira et al., 2023) para escala regional, cobrindo **155 estações** "
+        f"(Ferreira et al., 2023) para escala regional, cobrindo **{n_est} estações** "
         "automáticas do INMET (2022–2025)."
     )
 
@@ -170,7 +171,7 @@ if pagina == "Visão Geral":
         .reindex(ESTADOS_NE)
         .round(3)
     )
-    st.dataframe(resumo, width="stretch")
+    st.dataframe(resumo, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -193,7 +194,7 @@ elif pagina == "Análise Exploratória":
     for arquivo, legenda in figuras:
         caminho = FIG_DIR / arquivo
         if caminho.exists():
-            st.image(str(caminho), caption=legenda, width="stretch")
+            st.image(str(caminho), caption=legenda, use_container_width=True)
         else:
             st.info(f"Figura ausente: `{arquivo}`")
         st.divider()
@@ -233,7 +234,7 @@ elif pagina == "Desempenho dos Modelos":
     tabela = sub[list(cols_show)].rename(columns=cols_show).set_index("Modelo").round(3)
     st.dataframe(
         tabela.style.highlight_max(subset=["R² Holdout", "R² K-Fold", "R² LOO"], color="#c6efce"),
-        width="stretch",
+        use_container_width=True,
     )
 
     st.subheader("Comparação visual")
@@ -241,19 +242,19 @@ elif pagina == "Desempenho dos Modelos":
     f9 = REPORTS_DIR / "fig09_comparacao_modelos.png"
     f10 = REPORTS_DIR / "fig10_previsto_vs_real.png"
     if f9.exists():
-        c1.image(str(f9), caption="R² por modelo e alvo (Leave-One-Out)", width="stretch")
+        c1.image(str(f9), caption="R² por modelo e alvo (Leave-One-Out)", use_container_width=True)
     if f10.exists():
-        c2.image(str(f10), caption="Previsto vs. real (LOO)", width="stretch")
+        c2.image(str(f10), caption="Previsto vs. real (LOO)", use_container_width=True)
 
     f11 = REPORTS_DIR / "fig11_ablacao_altitude.png"
     if f11.exists():
         st.image(str(f11),
-                 caption="Importância por ablação: incluir ALT reduz o R² — por isso os modelos usam apenas LAT/LON.",
-                 width="content")
+                 caption="Ablação de features: UF (estado) melhora o R² em todos os alvos; ALT reduz — modelos finais usam LAT/LON/UF.",
+                 use_container_width=True)
 
     with st.expander("Hiperparâmetros selecionados (GridSearch / RandomizedSearch)"):
         st.dataframe(sub[["modelo", "busca", "best_params"]].set_index("modelo"),
-                     width="stretch")
+                     use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -262,23 +263,30 @@ elif pagina == "Desempenho dos Modelos":
 elif pagina == "Previsão Interativa":
     st.title("Previsão Interativa do Potencial Renovável")
     st.markdown(
-        "Informe as **coordenadas geográficas** de um ponto do Nordeste para "
-        "estimar a irradiação solar, a velocidade do vento e o índice IP-NE."
+        "Informe as **coordenadas geográficas** e o **estado** de um ponto do "
+        "Nordeste para estimar a irradiação solar, a velocidade do vento e o IP-NE."
     )
 
     if not ARTEFATOS_OK:
         st.warning("Modelos não encontrados. Execute `python src/train.py` primeiro.")
         st.stop()
 
-    # As features (e a ordem) vêm do metadata gravado pelo treino — hoje LAT/LON.
-    feat_order = (metadata or {}).get("features_ordem", ["LAT", "LON"])
+    # Features e ordem vêm do metadata gravado pelo treino
+    feat_order  = (metadata or {}).get("features_ordem", ["LAT", "LON", "UF_ENC"])
+    uf_classes  = (metadata or {}).get("uf_classes", ESTADOS_NE)
     fr = (metadata or {}).get("features", {})
     rotulos  = {"LAT": "Latitude (graus)", "LON": "Longitude (graus)", "ALT": "Altitude (m)"}
     fallback = {"LAT": (-18.0, -1.0, -8.0), "LON": (-48.0, -34.0, -40.0), "ALT": (0.0, 1300.0, 300.0)}
 
-    cols = st.columns(len(feat_order))
-    valores = {}
-    for col, f in zip(cols, feat_order):
+    # UF selector separado (não é numérico)
+    uf_selecionado = st.selectbox("Estado (UF)", uf_classes, index=uf_classes.index("CE") if "CE" in uf_classes else 0)
+    uf_enc = uf_classes.index(uf_selecionado)
+
+    # Inputs numéricos para as demais features
+    feats_num = [f for f in feat_order if f != "UF_ENC"]
+    cols = st.columns(len(feats_num))
+    valores: dict[str, float] = {"UF_ENC": float(uf_enc)}
+    for col, f in zip(cols, feats_num):
         if f in fr:
             fmin, fmax, fdef = float(fr[f]["min"]), float(fr[f]["max"]), float(fr[f]["mean"])
         else:
@@ -289,7 +297,7 @@ elif pagina == "Previsão Interativa":
             min_value=fmin - margem, max_value=fmax + margem, format="%.4f",
         )
 
-    if st.button("Prever", type="primary", width="stretch"):
+    if st.button("Prever", type="primary", use_container_width=True):
         X = np.array([[valores[f] for f in feat_order]])
         lat, lon = valores.get("LAT"), valores.get("LON")
         pred = {alvo: float(modelos[alvo].predict(X)[0]) for alvo in modelos}
@@ -326,7 +334,7 @@ elif pagina == "Previsão Interativa":
             ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
             ax.legend(loc="best")
             ax.grid(alpha=0.3, linestyle="--")
-            st.pyplot(fig, width="content")
+            st.pyplot(fig, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -349,7 +357,7 @@ elif pagina == "Ranking & Mapa":
         plt.colorbar(sc, ax=ax, label=ALVO_LABEL[metrica])
         ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
         ax.grid(alpha=0.3, linestyle="--")
-        st.pyplot(fig, width="stretch")
+        st.pyplot(fig, use_container_width=True)
 
     with c2:
         st.subheader("Top 15 estações")
@@ -357,7 +365,7 @@ elif pagina == "Ranking & Mapa":
                .reset_index(drop=True).round(3))
         top.index += 1
         top.columns = ["Estação", "UF", ALVO_LABEL[metrica]]
-        st.dataframe(top, width="stretch", height=560)
+        st.dataframe(top, use_container_width=True, height=560)
 
     st.divider()
     st.subheader("Distribuição por estado")

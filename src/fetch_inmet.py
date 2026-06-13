@@ -49,7 +49,7 @@ HORA_SOLAR_MIN = 5
 HORA_SOLAR_MAX = 18
 
 # Mínimo de horas válidas para um dia entrar na média
-MIN_HORAS_SOLAR_DIA = 1   # ao menos 1 leitura diurna válida
+MIN_HORAS_SOLAR_DIA = 8   # ao menos 8 leituras diurnas válidas (cobertura mínima do dia)
 MIN_HORAS_VENTO_DIA = 1   # ao menos 1 leitura válida
 
 ZIP_DIR  = Path(__file__).parent.parent / "data" / "zips"
@@ -283,16 +283,22 @@ def main() -> None:
 
             raw_path = RAW_DIR / f"{uf_arq}_{cod_arq}_{year}.csv"
 
-            # Cache: se o arquivo raw já existe e tem conteúdo, não reprocessa
+            # Cache: só reutiliza se o arquivo existe E tem ao menos um valor
+            # válido de sensor (evita arquivos com timestamps mas sem rad/vento).
             if raw_path.exists() and raw_path.stat().st_size > 200:
                 df_ano = pd.read_csv(raw_path, parse_dates=["datetime_utc"])
-                meta_cache = {}   # metadata será lido do CSV já processado depois
-                if chave not in estacoes:
-                    estacoes[chave] = {"meta": meta_cache, "frames": []}
-                estacoes[chave]["frames"].append(df_ano)
-                log.info("  [%d] %s_%s: cache (%d linhas)",
-                         year, uf_arq, cod_arq, len(df_ano))
-                continue
+                has_data = (df_ano["rad_kJm2"].notna().any() or
+                            df_ano["vento_ms"].notna().any())
+                if has_data:
+                    meta_cache = {}
+                    if chave not in estacoes:
+                        estacoes[chave] = {"meta": meta_cache, "frames": []}
+                    estacoes[chave]["frames"].append(df_ano)
+                    log.info("  [%d] %s_%s: cache (%d linhas)",
+                             year, uf_arq, cod_arq, len(df_ano))
+                    continue
+                log.info("  [%d] %s_%s: cache ignorado (sensores todos NaN) — reprocessando.",
+                         year, uf_arq, cod_arq)
 
             # Lê e processa o CSV do ZIP
             try:
