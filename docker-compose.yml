@@ -1,16 +1,20 @@
 # Atlas Renovável do Nordeste — orquestração de 3 serviços:
-#   trainer   → executa src/train.py uma vez (gera mlruns/, models/, reports/)
+#   trainer   → executa train.py (anual) + train_mensal.py (pipeline principal),
+#               gerando mlruns/, models/, reports/ das duas granularidades
 #   mlflow    → MLflow UI em http://localhost:5001
 #   dashboard → Streamlit em http://localhost:8501
 #
 # Uso:  docker compose up --build
 # Os diretórios mlruns/, models/ e reports/ são montados no host para persistir
 # os artefatos e compartilhá-los entre os serviços.
+# Requer data/processed/inmet_medias_mensais.csv já gerado (ver
+# src/aggregate_monthly.py) — não é recriado automaticamente pois depende dos
+# dados horários brutos em data/raw/, que não são versionados no repositório.
 
 services:
   trainer:
     build: .
-    command: python src/train.py
+    command: sh -c "python src/train.py && python src/train_mensal.py"
     environment:
       - MLFLOW_ALLOW_FILE_STORE=true
       - PYTHONUNBUFFERED=1

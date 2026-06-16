@@ -125,7 +125,13 @@ TARGETS = {
 
 SEED       = 42
 KFOLD_K    = 10
-CV_SEARCH  = 5  # folds internos da busca de hiperparâmetros
+# Folds internos da busca de hiperparâmetros. Usa um objeto KFold com
+# shuffle=True em vez de um inteiro: o dataset é ordenado por UF/ESTACAO, e o
+# GridSearchCV/RandomizedSearchCV com cv=int faz KFold *sem* shuffle, o que
+# quebra a CV interna em blocos contíguos de estados — degradando a escolha
+# de hiperparâmetros (ex.: RandomForest convergia para max_depth=5 em vez do
+# valor que de fato generaliza melhor).
+CV_SEARCH  = KFold(n_splits=5, shuffle=True, random_state=SEED)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -213,7 +219,7 @@ def construir_modelos(rapido: bool = False) -> dict:
             },
             "RandomForest": {
                 "model__n_estimators": [100, 300, 500],
-                "model__max_depth":    [5, 10, None],
+                "model__max_depth":    [5, 8, 10, 12, 15, 20, None],
             },
             "AdaBoost": {
                 "model__n_estimators":  [50, 100, 200],
