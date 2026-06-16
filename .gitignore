@@ -4,8 +4,6 @@ __pycache__/
 *.pyo
 .ipynb_checkpoints/
 mlruns/
-data/raw/
-data/processed/
 data/zips/
 models/
 *.log
