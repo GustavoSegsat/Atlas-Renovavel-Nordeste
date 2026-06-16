@@ -232,7 +232,7 @@ if pagina == "Visão Geral":
         .reindex(ESTADOS_NE)
         .round(3)
     )
-    st.dataframe(resumo, use_container_width=True)
+    st.dataframe(resumo, width='stretch')
 
     st.info(
         "Este panorama usa a média anual por estação (1 valor por estação, "
@@ -264,7 +264,7 @@ elif pagina == "Análise Exploratória":
     for arquivo, legenda in figuras:
         caminho = FIG_DIR / arquivo
         if caminho.exists():
-            st.image(str(caminho), caption=legenda, use_container_width=True)
+            st.image(str(caminho), caption=legenda, width='stretch')
         else:
             st.info(f"Figura ausente: `{arquivo}`")
         st.divider()
@@ -313,7 +313,7 @@ elif pagina == "Desempenho dos Modelos":
         tabela.style.highlight_max(
             subset=["R² Holdout", "R² K-Fold", "R² GroupKFold (estação)"], color="#c6efce"
         ),
-        use_container_width=True,
+        width='stretch',
     )
 
     st.subheader("Comparação visual")
@@ -321,13 +321,13 @@ elif pagina == "Desempenho dos Modelos":
     f9 = REPORTS_DIR / "fig09_comparacao_modelos_mensal.png"
     f10 = REPORTS_DIR / "fig10_previsto_vs_real_mensal.png"
     if f9.exists():
-        c1.image(str(f9), caption="R² por modelo e alvo (K-Fold)", use_container_width=True)
+        c1.image(str(f9), caption="R² por modelo e alvo (K-Fold)", width='stretch')
     if f10.exists():
-        c2.image(str(f10), caption="Previsto vs. real (K-Fold)", use_container_width=True)
+        c2.image(str(f10), caption="Previsto vs. real (K-Fold)", width='stretch')
 
     with st.expander("Hiperparâmetros selecionados (GridSearch / RandomizedSearch)"):
         st.dataframe(sub[["modelo", "busca", "best_params"]].set_index("modelo"),
-                     use_container_width=True)
+                     width='stretch')
 
     st.divider()
     with st.expander("🕰️ Versão anterior (granularidade anual) — diagnóstico metodológico", expanded=False):
@@ -360,19 +360,19 @@ elif pagina == "Desempenho dos Modelos":
             }
             st.dataframe(
                 sub_anual[list(cols_show_a)].rename(columns=cols_show_a).set_index("Modelo").round(3),
-                use_container_width=True,
+                width='stretch',
             )
         ca, cb = st.columns(2)
         f9a, f10a = REPORTS_DIR / "fig09_comparacao_modelos.png", REPORTS_DIR / "fig10_previsto_vs_real.png"
         if f9a.exists():
-            ca.image(str(f9a), caption="Anual — R² por modelo (Leave-One-Out)", use_container_width=True)
+            ca.image(str(f9a), caption="Anual — R² por modelo (Leave-One-Out)", width='stretch')
         if f10a.exists():
-            cb.image(str(f10a), caption="Anual — Previsto vs. real (LOO)", use_container_width=True)
+            cb.image(str(f10a), caption="Anual — Previsto vs. real (LOO)", width='stretch')
         f11 = REPORTS_DIR / "fig11_ablacao_altitude.png"
         if f11.exists():
             st.image(str(f11),
                      caption="Ablação de features (versão anual): UF melhora o R² em todos os alvos; ALT reduz.",
-                     use_container_width=True)
+                     width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -418,7 +418,7 @@ elif pagina == "Previsão Interativa":
             min_value=fmin - margem, max_value=fmax + margem, format="%.4f",
         )
 
-    if st.button("Prever", type="primary", use_container_width=True):
+    if st.button("Prever", type="primary", width='stretch'):
         X = np.array([[valores[f] for f in feat_order]])
         lat, lon = valores.get("LAT"), valores.get("LON")
         pred = {alvo: float(modelos_mensal[alvo].predict(X)[0]) for alvo in modelos_mensal}
@@ -456,7 +456,7 @@ elif pagina == "Previsão Interativa":
             ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
             ax.legend(loc="best")
             ax.grid(alpha=0.3, linestyle="--")
-            st.pyplot(fig, use_container_width=True)
+            st.pyplot(fig, width='stretch')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -493,7 +493,7 @@ elif pagina == "Ranking & Mapa":
         plt.colorbar(sc, ax=ax, label=ALVO_LABEL[metrica])
         ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
         ax.grid(alpha=0.3, linestyle="--")
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig, width='stretch')
 
     with c2:
         st.subheader("Top 15 estações")
@@ -501,7 +501,7 @@ elif pagina == "Ranking & Mapa":
                .reset_index(drop=True).round(3))
         top.index += 1
         top.columns = ["Estação", "UF", ALVO_LABEL[metrica]]
-        st.dataframe(top, use_container_width=True, height=560)
+        st.dataframe(top, width='stretch', height=560)
 
     st.divider()
     st.subheader("Distribuição por estado")
